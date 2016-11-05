@@ -1,0 +1,7 @@
+---
+resource_pools:
+  - name: bastion
+    cloud_properties:
+      cpu:  2
+      disk: 20000
+      ram:  4096

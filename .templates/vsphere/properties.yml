@@ -1,0 +1,37 @@
+---
+meta:
+  iaas:
+    type: vsphere
+
+  vsphere:
+    address:    (( param "Please provide the IP address of your vCenter appliance" ))
+    username:   (( vault meta.vault_prefix "/vcenter:username" ))
+    password:   (( vault meta.vault_prefix "/vcenter:password" ))
+
+    datacenter: (( param "Please provide the name of your vSphere Datacenter" ))
+    cluster:    (( param "Please provide either a cluster name, or a cluster -> resource pool configuration" ))
+
+    datastores:
+      persistent: (( grab meta.vsphere.datastores.ephemeral ))
+      ephemeral:  (( param "Please supply one or more datastore names, separated by pipes" ))
+
+    folder: (( concat name "/bastion" ))
+
+cloud_provider:
+  properties:
+    vcenter:
+      address:  (( grab meta.vsphere.address ))
+      user:     (( grab meta.vsphere.username ))
+      password: (( grab meta.vsphere.password ))
+
+      datacenters:
+        - name: (( grab meta.vsphere.datacenter ))
+          clusters:
+            - (( grab meta.vsphere.cluster ))
+
+          datastore_pattern:             (( grab meta.vsphere.datastores.ephemeral ))
+          persistent_data_store_pattern: (( grab meta.vsphere.datastores.persistent ))
+
+          vm_folder:       (( concat meta.vsphere.folder "/vms" ))
+          template_folder: (( concat meta.vsphere.folder "/templates" ))
+          disk_path:       (( concat meta.vsphere.folder "/disks" ))

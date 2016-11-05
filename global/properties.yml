@@ -1,1 +1,4 @@
---- {}
+---
+properties:
+  jumpbox:
+    hostname: (( grab name ))

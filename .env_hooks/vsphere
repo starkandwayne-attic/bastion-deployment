@@ -1,0 +1,224 @@
+#!/bin/bash
+set -eu
+
+#
+# vsphere environment hook
+# Bastion Deployment Template
+#
+# This env hook provides vSphere-specific setup
+# of things like credentials, vCenter addressing,
+# networking, etc.
+#
+
+if [[ -z ${DEPLOYMENT_ROOT:-} ]]; then
+	echo >&2 "env_hook scripts ought not be called directly."
+	echo >&2 "Please use \`genesis new env ...' instead"
+	exit 1
+fi
+
+if [[ ! -f ${DEPLOYMENT_ROOT}/${DEPLOYMENT_SITE}/site/.iaas ]]; then
+	# no idea what infrastructure this is,
+	# so don't do vSphere-specific stuff.
+	exit 0
+fi
+if [[ $(cat ${DEPLOYMENT_ROOT}/${DEPLOYMENT_SITE}/site/.iaas) != "vsphere" ]]; then
+	exit 0
+fi
+
+if [[ -n ${EXPERT:-} ]]; then
+	echo "EXPERT MODE enabled;"
+	echo "skipping all helpful guided configuration"
+	echo "Good Luck, Traveller!"
+	echo
+	exit 0
+fi
+
+trap "exit 1" TERM INT QUIT
+cat <<EOF
+
+
+         .d8888b.           888
+        d88P  Y88b          888
+        Y88b.               888
+888  888 "Y888b.   88888b.  88888b.   .d88b.  888d888 .d88b.
+888  888    "Y88b. 888 "88b 888 "88b d8P  Y8b 888P"  d8P  Y8b
+Y88  88P      "888 888  888 888  888 88888888 888    88888888
+ Y8bd8P Y88b  d88P 888 d88P 888  888 Y8b.     888    Y8b.
+  Y88P   "Y8888P"  88888P"  888  888  "Y8888  888     "Y8888
+                   888
+                   888
+                   888
+
+Setting up your vSphere-deployed Bastion Host
+
+First, I need to ask you a few questions about your bastion host,
+how you want it named and configured, where vCenter lives, etc.
+
+-------------------------------------------------------------------
+To start out with, we need a Vault in which to store secrets
+EOF
+echo
+if [[ -z $(safe targets 2>&1) ]]; then
+	echo "ERROR: You do not seem to have targeted any vaults via \`safe'"
+	echo
+	echo "       Try a \`safe target <name> https://ip.ad.dre.ss'"
+	echo
+	exit 1
+fi
+
+echo "You have the following Vaults defined:"
+safe targets
+safe target
+
+echo
+echo "Is this the Vault you wish to use for vCenter credentials?"
+echo -n "(under \`${VAULT_PREFIX}') [yes/NO]: "
+read YESNO
+echo
+case ${YESNO} in
+yes) ;;
+*)
+	echo
+	echo "Pick another vault and then re-run \`genesis new env ...'"
+	exit 1
+	;;
+esac
+
+echo "-------------------------------------------------------------------"
+echo "Please provide your vCenter credentials"
+safe set ${VAULT_PREFIX}/vcenter username password
+echo
+cat <<EOF
+-------------------------------------------------------------------
+Now, you'll be asked some questions about your vSphere installation
+
+This information is required to properly configure the vSphere
+integration, and includes things like the IP address of the vCenter
+appliance, the datacenter, cluster, and resource pool to place the
+bastion host into, 
+
+EOF
+
+echo -n "vCenter IP>    "
+read VCENTER_IP
+if [[ -z ${VCENTER_IP} ]]; then
+	echo "No vCenter IP supplied.  Bailing out."
+	exit 1
+fi
+
+echo -n "Datacenter>    "
+read VCENTER_DC
+if [[ -z ${VCENTER_DC} ]]; then
+	echo "No vCenter datacenter supplied.  Bailing out."
+	exit 1
+fi
+
+echo -n "Cluster>       "
+read VCENTER_CL
+if [[ -z ${VCENTER_CL} ]]; then
+	echo "No cluster supplied.  Bailing out."
+	exit 1
+fi
+
+echo -n "Resource Pool> "
+read VCENTER_RP
+
+echo -n "Datastore>     "
+read VCENTER_DS
+if [[ -z ${VCENTER_DS} ]]; then
+	echo "No datstore supplied.  Bailing out."
+	exit 1
+fi
+echo
+
+cat <<EOF
+-------------------------------------------------------------------
+Now, we need some additional information about the Bastion host itself.
+
+Most of this information is about the networking configuration of the
+bastion host, including its network segment, gateway, IP address and
+DNS name server configuration.
+
+EOF
+echo -n "vCenter Network> "
+read VCENTER_NETNAME
+if [[ -z ${VCENTER_NETNAME} ]]; then
+	echo "No network name supplied.  Bailing out."
+	exit 1
+fi
+
+echo -n "DNS Server(s)>   "
+read BASTION_DNS
+if [[ -z ${BASTION_DNS} ]]; then
+	echo "No DNS servers supplied.  Bailing out."
+	exit 1
+fi
+
+echo -n "Network Segment> "
+read BASTION_NET
+if [[ -z ${BASTION_NET} ]]; then
+	echo "No network segment CIDR) supplied.  Bailing out."
+	exit 1
+fi
+
+echo -n "Gateway>         "
+read BASTION_GW
+if [[ -z ${BASTION_GW} ]]; then
+	echo "No default gateway supplied.  Bailing out."
+	exit 1
+fi
+
+echo -n "Bastion IP>      "
+read BASTION_IP
+if [[ -z ${BASTION_GW} ]]; then
+	echo "No IP address supplied.  Bailing out."
+	exit 1
+fi
+echo
+
+echo "-------------------------------------------------------------------"
+echo "Generating ${DEPLOYMENT_SITE}/${DEPLOYMENT_ENVIRONMENT}/properties.yml"
+(
+cat <<EOF
+---
+meta:
+  vsphere:
+    address:    ${VCENTER_IP}
+    datacenter: ${VCENTER_DC}
+    datastores:
+      ephemeral: ${VCENTER_DS}
+      # NOTE: you may also want to set the 'persistent' datastore here
+      #       (meta.vsphere.datastores.persistent).  By default, the
+      #       the same datastores are used for ephemeral and persistent.
+EOF
+if [[ -n ${VCENTER_RP} ]]; then
+  cat <<EOF
+    cluster:
+      ${VCENTER_CL}:
+        resource_pool: ${VCENTER_RP}
+EOF
+else
+  cat <<EOF
+    cluster: ${VCENTER_CL}
+EOF
+fi
+)> ${ENVIRONMENT_ROOT}/properties.yml
+
+echo "Generating ${DEPLOYMENT_SITE}/${DEPLOYMENT_ENVIRONMENT}/networking.yml"
+(
+cat <<EOF
+---
+networks:
+  - name: bastion
+    subnets:
+      - range:   ${BASTION_NET}
+        gateway: ${BASTION_GW}
+        dns:     [ ${BASTION_DNS} ]
+        static:
+          - ${BASTION_IP}
+        cloud_properties:
+          name: ${VCENTER_NETNAME}
+EOF
+)> ${ENVIRONMENT_ROOT}/networking.yml
+
+# vim:ft=bash

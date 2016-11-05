@@ -1,1 +1,55 @@
---- {}
+---
+meta:
+  creds:
+    bosh-init:
+      mbus:
+        # If you want, you can override the arbitrary username and password
+        # that are used for the bosh-init director to communicate to the
+        # bosh agent (via mbus) -- this is not necessary, as these credentials
+        # DO NOT PERSIST beyond the provisioning stage of `bosh-init deploy`
+        #
+        username: xoo0ohcho8Fae6jiaGhi
+        password: Aizew2cheisie2yuMone
+
+  # We provide the normal NTP pool servers as defaults, but allow users to
+  # easily override them here:
+  ntp-servers:
+    - 0.pool.ntp.org
+    - 1.pool.ntp.org
+
+  iaas:
+    type: (( param "Please specify the type of IaaS you want to deploy to (vsphere, aws, azure, warden, etc.)" ))
+    template:
+      # These can be overridden for CPI's that do not follow the normal
+      # BOSH CPI naming conventions (i.e. older or 3rd-party CPIs)
+      release: (( concat "bosh-" meta.iaas.type "-cpi" ))
+      name:    (( concat meta.iaas.type "_cpi" ))
+
+jobs:
+  - name: bastion
+    instances: 1
+    templates:
+      - (( grab meta.iaas.template ))
+      - { release: jumpbox, name: jumpbox }
+      - { release: toolbelt, name: toolbelt-quick }
+      - { release: toolbelt, name: toolbelt-dev }
+
+    resource_pool:        bastion
+    persistent_disk_pool: bastion
+
+    networks:
+      - name: bastion
+        static_ips: (( static_ips 0 ))
+
+cloud_provider:
+  template: (( grab meta.iaas.template ))
+  mbus: (( concat "https://" meta.creds.bosh-init.mbus.username ":" meta.creds.bosh-init.mbus.password "@" jobs.bastion.networks.bastion.static_ips[0] ":6868" ))
+  properties:
+    agent:
+      mbus: (( concat "https://" meta.creds.bosh-init.mbus.username ":" meta.creds.bosh-init.mbus.password "@0.0.0.0:6868" ))
+
+    blobstore:
+      provider: local
+      path:     /var/vcap/bosh-init/data/cache
+
+    ntp: (( grab meta.ntp-servers ))
