@@ -808,6 +808,24 @@ refresh_site() {
 	rm -fr ${root}/.site.old
 }
 
+run_env_hooks() {
+	if [[ -d ${DEPLOYMENT_ROOT}/.env_hooks ]]; then
+		for file in ${DEPLOYMENT_ROOT}/.env_hooks/*; do
+			if [[ -f ${file} && -x ${file} ]]; then
+				export VAULT_PREFIX DEPLOYMENT_NAME DEPLOYMENT_SITE DEPLOYMENT_ENVIRONMENT DEPLOYMENT_ROOT ENVIRONMENT_ROOT
+				if ! ${file}; then
+					echo
+					echo
+					echo "env_hook '${file##*/}' bailed (exit ${?})."
+					echo "Tearing down ${DEPLOYMENT_SITE}/${DEPLOYMENT_ENVIRONMENT} environment..."
+					rm -rf ${ENVIRONMENT_ROOT}
+					exit 1
+				fi
+			fi
+		done
+	fi
+}
+
 create_normal_environment() {
 	setup
 	local site=${1:?create_normal_environment() - no site provided}
@@ -854,22 +872,7 @@ meta:
   vault_prefix: ${VAULT_PREFIX}
 EOF
 
-	if [[ -d ${DEPLOYMENT_ROOT}/.env_hooks ]]; then
-		for file in ${DEPLOYMENT_ROOT}/.env_hooks/*; do
-			if [[ -f ${file} && -x ${file} ]]; then
-				echo "Running env setup hook: ${file}"
-				export VAULT_PREFIX DEPLOYMENT_NAME DEPLOYMENT_SITE DEPLOYMENT_ENVIRONMENT DEPLOYMENT_ROOT ENVIRONMENT_ROOT
-				${file}
-				local rc=$?
-				if [[ $rc -ne 0 ]]; then
-					echo "Setup script bailed (exit ${rc})."
-					echo "Tearing down ${DEPLOYMENT_SITE}/${DEPLOYMENT_ENVIRONMENT} environment..."
-					rm -rf ${ENVIRONMENT_ROOT}
-					exit 1
-				fi
-			fi
-		done
-	fi
+	run_env_hooks
 
 	refresh_global ${site} ${name}
 	refresh_site   ${site} ${name}
@@ -922,15 +925,7 @@ meta:
   vault_prefix: ${VAULT_PREFIX}
 EOF
 
-	if [[ -d ${DEPLOYMENT_ROOT}/.env_hooks ]]; then
-		for file in ${DEPLOYMENT_ROOT}/.env_hooks/*; do
-			if [[ -f ${file} && -x ${file} ]]; then
-				echo "Running env setup hook: ${file}"
-				export VAULT_PREFIX DEPLOYMENT_NAME DEPLOYMENT_SITE DEPLOYMENT_ENVIRONMENT DEPLOYMENT_ROOT ENVIRONMENT_ROOT=${DEPLOYMENT_ROOT}/${DEPLOYMENT_SITE}/${DEPLOYMENT_ENVIRONMENT}
-				${file}
-			fi
-		done
-	fi
+	run_env_hooks
 
 	refresh_global ${site} ${name}
 	refresh_site   ${site} ${name}
@@ -1001,15 +996,6 @@ preflight_normal_deployment() {
 
 	ensure_present stemcell ${stemcell_name} ${stemcell_version}
 
-	local stemcell_url=""
-	if [[ -f "${DEPLOYMENT_ENV_DIR}/.site/stemcell/url" ]]; then
-		stemcell_url=$(cat "${DEPLOYMENT_ENV_DIR}/.site/stemcell/url")
-	fi
-	local stemcell_sha1=""
-	if [[ -f "${DEPLOYMENT_ENV_DIR}/.site/stemcell/sha1" ]]; then
-		stemcell_sha1=$(cat "${DEPLOYMENT_ENV_DIR}/.site/stemcell/sha1")
-	fi
-
 	if [[ ! -f "${DEPLOYMENT_ENV_DIR}/.site/releases" ]]; then
 		echo >&2 "Error: no releases listed for site"
 		exit 2
@@ -1041,12 +1027,22 @@ normal_site_metadata() {
 
 	local stemcell_name=$(cat "${DEPLOYMENT_ENV_DIR}/.site/stemcell/name")
 	local stemcell_version=$(cat "${DEPLOYMENT_ENV_DIR}/.site/stemcell/version")
+
+	local stemcell_url=""
+	if [[ -f ${DEPLOYMENT_ENV_DIR}/.global/stemcell/url ]]; then
+		stemcell_url=$(cat ${DEPLOYMENT_ENV_DIR}/.global/stemcell/url)
+	fi
+	local stemcell_sha1=""
+	if [[ -f ${DEPLOYMENT_ENV_DIR}/.global/stemcell/sha1 ]]; then
+		stemcell_sha1=$(cat ${DEPLOYMENT_ENV_DIR}/.global/stemcell/sha1)
+	fi
+
 	cat <<EOF
 ---
 meta:
   stemcell:
     name: ${stemcell_name}
-    version: ${stemcell_version}
+    version: "${stemcell_version}"
 EOF
 	if [[ -n ${stemcell_url} ]]; then
 		echo "    url: ${stemcell_url}"
@@ -1070,7 +1066,7 @@ EOF
 		fi
 
 		echo "  - name: ${rel}"
-		echo "    version: ${release_version}"
+		echo "    version: \"${release_version}\""
 		if [[ -n ${release_url} ]]; then
 			echo "    url: \"${release_url}\""
 		fi
@@ -1331,6 +1327,9 @@ bosh_init_site_metadata() {
 	must_be_in_an_environment
 	preflight_deployment
 
+	local stemcell_name=$(cat "${DEPLOYMENT_ENV_DIR}/.site/stemcell/name")
+	local stemcell_url=$(cat "${DEPLOYMENT_ENV_DIR}/.site/stemcell/url")
+	local stemcell_sha1=$(cat "${DEPLOYMENT_ENV_DIR}/.site/stemcell/sha1")
 	cat <<EOF
 ---
 meta:
@@ -1344,6 +1343,8 @@ cloud_provider:
 
 releases:
 EOF
+
+	local releases=$(releases_from "${DEPLOYMENT_ENV_DIR}/.site/releases")
 	for rel in ${releases}; do
 		echo "  - name: ${rel}"
 		echo "    url:  $(cat ${DEPLOYMENT_ENV_DIR}/.global/releases/${rel}/url)"
@@ -2718,7 +2719,7 @@ cmd_ci_beta() {
 		set -- "${DEPLOYMENT_SITE}/${DEPLOYMENT_ENVIRONMENT}"
 	fi
 	for site_env in "$@"; do
-		[[ ${site_env} =~ -.* ]] && bad_usage ${USAGE}
+		[[ ${site_env} =~ ^- ]] && bad_usage ${USAGE}
 
 		check_environment $site_env
 		local site=${site_env%%/*}
@@ -2743,7 +2744,7 @@ cmd_ci_auto() {
 		set -- "${DEPLOYMENT_SITE}/${DEPLOYMENT_ENVIRONMENT}"
 	fi
 	for site_env in "$@"; do
-		[[ ${site_env} =~ -.* ]] && bad_usage ${USAGE}
+		[[ ${site_env} =~ ^- ]] && bad_usage ${USAGE}
 
 		check_environment $site_env
 		local site=${site_env%%/*}
@@ -2785,7 +2786,7 @@ cmd_ci_manual() {
 	fi
 	rc=0
 	for site_env in "$@"; do
-		[[ ${site_env} =~ -.* ]] && bad_usage ${USAGE}
+		[[ ${site_env} =~ ^- ]] && bad_usage ${USAGE}
 
 		check_environment $site_env
 		local site=${site_env%%/*}
@@ -3514,6 +3515,12 @@ EOF
 	ls -l ~/.bosh_config
 	echo
 
+	local target=$(spruce json ${WORKING_DIR}/${CI_SITE_ENV}/director.yml | jq -r '.director_uuid')
+	line
+	echo "Targeting BOSH director ${target}"
+	echo
+	bosh target ${target}
+
 	line
 	echo "Probing environment for information..."
 	# figure out our environment type
@@ -3623,6 +3630,12 @@ ${CI_BOSHES}
 EOF
 	ls -l ~/.bosh_config
 	echo
+
+	local target=$(spruce json ${WORKING_DIR}/${CI_SITE_ENV}/director.yml | jq -r '.director_uuid')
+	line
+	echo "Targeting BOSH director ${target}"
+	echo
+	bosh target ${target}
 
 	line
 	pushd ${WORKING_DIR}/${CI_SITE_ENV} >/dev/null
