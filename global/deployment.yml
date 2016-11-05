@@ -1,0 +1,11 @@
+---
+name: (( param "Please define the deployment name in the environment templates" ))
+
+resource_pools: (( param "Please define one or more resource pools for your BOSH deployment" ))
+disk_pools:     (( param "Please define one or more disk pools for your BOSH deployment" ))
+networks:       (( param "Please define one or more networks for your BOSH deployment" ))
+
+update:
+  canaries: 1
+  max_in_flight: 1
+  serial: true
