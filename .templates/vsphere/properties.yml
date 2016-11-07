@@ -29,8 +29,8 @@ cloud_provider:
           clusters:
             - (( grab meta.vsphere.cluster ))
 
-          datastore_pattern:             (( grab meta.vsphere.datastores.ephemeral ))
-          persistent_data_store_pattern: (( grab meta.vsphere.datastores.persistent ))
+          datastore_pattern:            (( grab meta.vsphere.datastores.ephemeral ))
+          persistent_datastore_pattern: (( grab meta.vsphere.datastores.persistent ))
 
           vm_folder:       (( concat meta.vsphere.folder "/vms" ))
           template_folder: (( concat meta.vsphere.folder "/templates" ))
